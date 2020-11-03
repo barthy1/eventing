@@ -1,0 +1,21 @@
+name: remote ssh command
+on: [master]
+jobs:
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    env:
+      GOPATH: "~/gopath/src"
+    steps:
+    - name: executing remote ssh commands using password
+      uses: appleboy/ssh-action@master
+      env: 
+        GOPATH: ${{ env.GOPATH }}
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.KEY }}
+        script: |
+          uname -a
+          export PATH=${PATH}:/usr/local/go14/go/bin/:~/gopath/bin

@@ -42,7 +42,7 @@ function go_test_e2e() {
     [[ -n "$arg" ]] && go_test_args+=("$arg")
   done
   [[ ! " $*" == *" -tags="* ]] && go_test_args+=("-tags=e2e")
-  report_go_test -race -count=1 "${go_test_args[@]}"
+  report_go_test $(( `uname -m` == "s390x" ? "-race" :"" )) -count=1 "${go_test_args[@]}"
 }
 
 # Setup the test cluster for running the tests.

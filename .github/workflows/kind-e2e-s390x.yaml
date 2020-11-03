@@ -1,0 +1,152 @@
+name: KinD e2e s390x tests
+
+on: [push]
+    #  schedule:
+    #  - cron: '0 */4 * * *'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+
+  e2e-tests:
+    name: e2e tests
+    runs-on: ubuntu-latest
+    env:
+      GOPATH: "/home/ubuntu/gopath"
+      GO111MODULE: "off"
+      KO_DOCKER_REPO: "kind.local"
+      SYSTEM_NAMESPACE: "knative-eventing"
+      GOROOT: "/usr/local/go14/go"
+      # Use a semi-random cluster suffix, but somewhat predictable
+      # so reruns don't just give us a completely new value.
+      CLUSTER_SUFFIX: "c${{ github.run_id }}.local"
+      ARTIFACTS: "~/gopath/src/artifacts"
+
+    steps:
+    - name: Install Dependencies
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.KEY }}
+        envs: GOPATH, GO111MODULE, KO_DOCKER_REPO, SYSTEM_NAMESPACE, CLUSTER_SUFFIX, ARTIFACTS, GOROOT, GITHUB_SHA, GITHUB_REPOSITORY
+        script: |
+          echo "${KO_DOCKER_REPO}"
+          export PATH="${PATH}:/usr/local/go14/go/bin/:~/gopath/bin"
+          cd ${GOROOT}; GO111MODULE=on go get github.com/google/ko/cmd/ko@master
+          GO111MODULE=on go get sigs.k8s.io/kubetest2/...@latest
+          go get knative.dev/test-infra/kntest/cmd/kntest
+          mkdir -p ${GOPATH}/src/knative.dev/eventing
+          REPO="https://github.com/${GITHUB_REPOSITORY}.git"
+          git clone ${REPO} ${GOPATH}/src/knative.dev/eventing
+          cd  ${GOPATH}/src/knative.dev/eventing
+          git checkout ${GITHUB_SHA}
+
+    - name: Configure KinD Cluster
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.KEY }}
+        envs: GOPATH, GO111MODULE, KO_DOCKER_REPO, SYSTEM_NAMESPACE, CLUSTER_SUFFIX, ARTIFACTS, GOROOT
+        script: |
+          cd ${GOPATH}/src/knative.dev/eventing
+          # KinD configuration.
+          cat > kind.yaml <<EOF
+          apiVersion: kind.x-k8s.io/v1alpha4
+          kind: Cluster
+
+          # This is needed in order to support projected volumes with service account tokens.
+          # See: https://kubernetes.slack.com/archives/CEKK1KTN2/p1600268272383600
+          kubeadmConfigPatches:
+            - |
+              apiVersion: kubeadm.k8s.io/v1beta2
+              kind: ClusterConfiguration
+              metadata:
+                name: config
+              apiServer:
+                extraArgs:
+                  "service-account-issuer": "kubernetes.default.svc"
+                  "service-account-signing-key-file": "/etc/kubernetes/pki/sa.key"
+          nodes:
+          - role: control-plane
+          - role: worker
+          EOF
+          kind create cluster --config kind.yaml --image gcr.io/s390x-test/node --name kind
+
+    - name: Install Knative Eventing
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.KEY }}
+        envs: GOPATH, GO111MODULE, KO_DOCKER_REPO, SYSTEM_NAMESPACE, CLUSTER_SUFFIX, ARTIFACTS, GOROOT
+        script_stop: true
+        script: |
+          set -o pipefail
+          export PATH="${PATH}:/usr/local/go14/go/bin/:~/gopath/bin:/home/ubuntu/go/bin"
+          kubectl create namespace ${SYSTEM_NAMESPACE}
+          cd ${GOPATH}/src/knative.dev/eventing
+          export KO_DOCKER_REPO=kind.local
+          export SYSTEM_NAMESPACE=knative-eventing
+          # Build and Publish our containers to the docker daemon (including test assets)
+          export GO111MODULE=on
+          export GOFLAGS=-mod=vendor
+          ko apply --platform=linux/s390x -P \
+             -f config/ \
+             `# Install the MT Broker` \
+             -f config/core/configmaps/default-broker.yaml \
+             -f config/brokers/mt-channel-broker \
+             `# Install the sugar controller` \
+             -f config/sugar/500-controller.yaml \
+             `# Install the in-memory channel` \
+             -f config/channels/in-memory-channel
+
+          # Change the cluster domain to the correct one.
+          ko apply --platform=linux/s390x -Pf test/config/
+          sleep 20s
+          # Be KinD to these tests.
+          kubectl scale -n ${SYSTEM_NAMESPACE} deployment/chaosduck --replicas=0
+
+          # Build and Publish our test images to the docker daemon.
+          ./test/upload-test-images.sh
+          #      kubectl wait pod --for=condition=Ready -n ${SYSTEM_NAMESPACE} -l '!job-name'
+          sleep 20s
+    - name: Run e2e Tests
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.KEY }}
+        envs: GOPATH, GO111MODULE, KO_DOCKER_REPO, SYSTEM_NAMESPACE, CLUSTER_SUFFIX, ARTIFACTS, GOROOT
+        script_stop: true
+        command_timeout: 60m
+        script: |
+          # Run the tests tagged as e2e on the KinD cluster.
+          export PATH="${PATH}:/usr/local/go14/go/bin/:~/gopath/bin:/home/ubuntu/go/bin"
+          cd ${GOPATH}/src/knative.dev/eventing
+          export KO_DOCKER_REPO=kind.local
+          export SYSTEM_NAMESPACE=knative-eventing
+          go test -count=1 -parallel=12 -timeout=30m -tags=e2e \
+             ./test/e2e -brokerclass=MTChannelBasedBroker -channels=messaging.knative.dev/v1beta1:Channel,messaging.knative.dev/v1beta1:InMemoryChannel,messaging.knative.dev/v1:Channel,messaging.knative.dev/v1:InMemoryChannel -sources=sources.knative.dev/v1alpha2:ApiServerSource,sources.knative.dev/v1alpha2:ContainerSource,sources.knative.dev/v1alpha2:PingSource
+
+          go test -count=1 -parallel=12 -timeout=30m -tags=e2e \
+            ./test/conformance  -brokers=eventing.knative.dev/v1beta1:MTChannelBasedBroker -channels=messaging.knative.dev/v1beta1:Channel,messaging.knative.dev/v1beta1:InMemoryChannel,messaging.knative.dev/v1:Channel,messaging.knative.dev/v1:InMemoryChannel -sources=sources.knative.dev/v1beta1:ApiServerSource,sources.knative.dev/v1alpha2:ContainerSource,sources.knative.dev/v1beta1:PingSource
+
+
+    - name: Cleanup
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        key: ${{ secrets.KEY }}
+        envs: GOPATH, GO111MODULE, KO_DOCKER_REPO, SYSTEM_NAMESPACE, CLUSTER_SUFFIX, ARTIFACTS, GOROOT        
+        script_stop: false
+        script: |
+          echo ${GOPATH}
+          rm -rf ${GOPATH}/src/knative.dev/eventing
+          kind delete cluster --name=kind
+      if: ${{ always() }}
+        
