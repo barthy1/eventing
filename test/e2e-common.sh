@@ -16,7 +16,7 @@
 
 # This script includes common functions for testing setup and teardown.
 
-export GO111MODULE=on
+export GO111MODULE=off
 
 source $(dirname $0)/../vendor/knative.dev/hack/e2e-tests.sh
 
@@ -31,7 +31,7 @@ fi
 
 # Eventing main config.
 readonly EVENTING_CONFIG="config/"
-
+readonly ARCH=`uname -m`
 # In-memory channel CRD config.
 readonly IN_MEMORY_CHANNEL_CRD_CONFIG_DIR="config/channels/in-memory-channel"
 
@@ -131,7 +131,7 @@ function install_knative_eventing() {
     mkdir -p ${TMP_CONFIG_DIR}
     cp -r ${kne_config}/* ${TMP_CONFIG_DIR}
     find ${TMP_CONFIG_DIR} -type f -name "*.yaml" -exec sed -i "s/namespace: ${KNATIVE_DEFAULT_NAMESPACE}/namespace: ${SYSTEM_NAMESPACE}/g" {} +
-    ko apply --strict -f "${TMP_CONFIG_DIR}" || return $?
+    ko apply --platform=linux/${ARCH} --strict -f "${TMP_CONFIG_DIR}" || return $?
   else
     local EVENTING_RELEASE_YAML=${TMP_DIR}/"eventing-${LATEST_RELEASE_VERSION}.yaml"
     # Download the latest release of Knative Eventing.
@@ -195,20 +195,20 @@ function run_preinstall_V018() {
   mkdir -p ${TMP_PRE_INSTALL_V018}
   cp -r ${PRE_INSTALL_V018}/* ${TMP_PRE_INSTALL_V018}
   find ${TMP_PRE_INSTALL_V018} -type f -name "*.yaml" -exec sed -i "s/namespace: ${KNATIVE_DEFAULT_NAMESPACE}/namespace: ${SYSTEM_NAMESPACE}/g" {} +
-  ko apply --strict -f "${TMP_PRE_INSTALL_V018}" || return 1
+  ko apply --platform=linux/${ARCH} --strict -f "${TMP_PRE_INSTALL_V018}" || return 1
   wait_until_batch_job_complete ${SYSTEM_NAMESPACE} || return 1
 }
 
 function install_mt_broker() {
   local TMP_MT_CHANNEL_BASED_BROKER_DEFAULT_CONFIG=${TMP_DIR}/${MT_CHANNEL_BASED_BROKER_DEFAULT_CONFIG##*/}
   sed "s/namespace: ${KNATIVE_DEFAULT_NAMESPACE}/namespace: ${SYSTEM_NAMESPACE}/g" ${MT_CHANNEL_BASED_BROKER_DEFAULT_CONFIG} > ${TMP_MT_CHANNEL_BASED_BROKER_DEFAULT_CONFIG}
-  ko apply --strict -f ${TMP_MT_CHANNEL_BASED_BROKER_DEFAULT_CONFIG} || return 1
+  ko apply --platform=linux/${ARCH}  --strict -f ${TMP_MT_CHANNEL_BASED_BROKER_DEFAULT_CONFIG} || return 1
 
   local TMP_MT_CHANNEL_BASED_BROKER_CONFIG_DIR=${TMP_DIR}/channel_based_config
   mkdir -p ${TMP_MT_CHANNEL_BASED_BROKER_CONFIG_DIR}
   cp -r ${MT_CHANNEL_BASED_BROKER_CONFIG_DIR}/* ${TMP_MT_CHANNEL_BASED_BROKER_CONFIG_DIR}
   find ${TMP_MT_CHANNEL_BASED_BROKER_CONFIG_DIR} -type f -name "*.yaml" -exec sed -i "s/namespace: ${KNATIVE_DEFAULT_NAMESPACE}/namespace: ${SYSTEM_NAMESPACE}/g" {} +
-  ko apply --strict -f ${TMP_MT_CHANNEL_BASED_BROKER_CONFIG_DIR} || return 1
+  ko apply --platform=linux/${ARCH} --strict  -f ${TMP_MT_CHANNEL_BASED_BROKER_CONFIG_DIR} || return 1
 
   scale_controlplane mt-broker-controller
 
@@ -220,7 +220,7 @@ function install_sugar() {
   mkdir -p ${TMP_SUGAR_CONTROLLER_CONFIG_DIR}
   cp -r ${SUGAR_CONTROLLER_CONFIG_DIR}/* ${TMP_SUGAR_CONTROLLER_CONFIG_DIR}
   find ${TMP_SUGAR_CONTROLLER_CONFIG_DIR} -type f -name "*.yaml" -exec sed -i "s/namespace: ${KNATIVE_DEFAULT_NAMESPACE}/namespace: ${SYSTEM_NAMESPACE}/g" {} +
-  ko apply --strict -f ${TMP_SUGAR_CONTROLLER_CONFIG_DIR} || return 1
+  ko apply --platform=linux/${ARCH} --strict  -f ${TMP_SUGAR_CONTROLLER_CONFIG_DIR} || return 1
   kubectl -n ${SYSTEM_NAMESPACE} set env deployment/sugar-controller BROKER_INJECTION_DEFAULT=true || return 1
 
   scale_controlplane sugar-controller
@@ -232,12 +232,12 @@ function unleash_duck() {
   echo "enable debug logging"
   cat test/config/config-logging.yaml | \
     sed "s/namespace: ${KNATIVE_DEFAULT_NAMESPACE}/namespace: ${SYSTEM_NAMESPACE}/g" | \
-    ko apply --strict -f - || return $?
+    ko apply --platform=linux/${ARCH} --strict  -f - || return $?
 
   echo "unleash the duck"
   cat test/config/chaosduck.yaml | \
     sed "s/namespace: ${KNATIVE_DEFAULT_NAMESPACE}/namespace: ${SYSTEM_NAMESPACE}/g" | \
-    ko apply --strict -f - || return $?
+    ko apply --platform=linux/${ARCH} --strict -f - || return $?
 }
 
 # Teardown the Knative environment after tests finish.
@@ -310,7 +310,7 @@ function install_channel_crds() {
   mkdir -p ${TMP_IN_MEMORY_CHANNEL_CONFIG_DIR}
   cp -r ${IN_MEMORY_CHANNEL_CRD_CONFIG_DIR}/* ${TMP_IN_MEMORY_CHANNEL_CONFIG_DIR}
   find ${TMP_IN_MEMORY_CHANNEL_CONFIG_DIR} -type f -name "*.yaml" -exec sed -i "s/namespace: ${KNATIVE_DEFAULT_NAMESPACE}/namespace: ${SYSTEM_NAMESPACE}/g" {} +
-  ko apply --strict -f ${TMP_IN_MEMORY_CHANNEL_CONFIG_DIR} || return 1
+  ko apply --platform=linux/${ARCH}  -f ${TMP_IN_MEMORY_CHANNEL_CONFIG_DIR} || return 1
 
   # TODO(https://github.com/knative/eventing/issues/3590): Enable once IMC chaos issues are fixed.
   # scale_controlplane imc-controller imc-dispatcher

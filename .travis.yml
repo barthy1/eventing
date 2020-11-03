@@ -1,0 +1,36 @@
+sudo: required
+arch: s390x
+
+language:
+  - go
+
+go:
+  - 1.14.x
+go_import_path: knative.dev/eventing
+
+services:
+  - docker
+
+env:
+  - DEPLOY_KNATIVE_MONITORING=0 GO111MODULE=off KO_DOCKER_REPO=kind.local PATH=$PATH:~/custom/bin 
+
+notifications:
+  email: false
+
+
+before_install:
+  - mkdir -p ~/custom/bin; wget https://storage.googleapis.com/s390x-test-bucket/kind-gcloud -O ~/custom/bin/kind; chmod +x ~/custom/bin/kind
+  - GO111MODULE=on go get sigs.k8s.io/kubetest2/...@latest
+  - go get knative.dev/test-infra/kntest/cmd/kntest
+  - mkdir -p $GOPATH/src/github.com/boz/kail ; git clone  https://github.com/boz/kail.git $GOPATH/src/github.com/boz/kail ; cd $GOPATH/src/github.com/boz/kail ; GO111MODULE=on make install-deps ; GO111MODULE=on  make ; cp kail ~/custom/bin/kail
+  - cd $GOROOT; GO111MODULE=on go get github.com/google/ko/cmd/ko@master
+        #  - docker login -u _json_key -p "${GCR_JSON_KEY}" https://gcr.io
+  - kind create cluster --name cl-2  --image gcr.io/s390x-test/node 
+  - cd $GOPATH/knative.dev/eventing ; test/upload-test-images.sh
+
+script:
+  - cd $GOPATH/knative.dev/eventing ; test/e2e-tests.sh 
+  
+
+
+
